@@ -17,3 +17,9 @@ Keras.egg-info
 
 # developer environments
 .idea
+
+# added by GitSavvy
+/.venv
+
+# added by GitSavvy
+/.gitignore
