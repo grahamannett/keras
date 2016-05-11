@@ -24,7 +24,6 @@
     [95,96,97,98],[99,100]
 
 also:
-
     example data can be generated with these:
         c1 = (list(range(1,10,1)) + list(range(10,1,-1)))*100
         c2 = [x * -1 * random() for x in c1]
@@ -35,6 +34,16 @@ also:
 
         sg = SequenceDataGen()
         t.flow(d)
+
+EXAMPLE2 :
+['preface\n\n\nsupposing that truth is a woma',
+'face\n\n\nsupposing that truth is a woman--',
+'e\n\n\nsupposing that truth is a woman--wha']
+self.x_window = 40
+x_window=10,
+y_window=1,
+x_step=3,
+x_y_diff=0,
 '''
 
 import numpy as np
@@ -137,10 +146,8 @@ class SequenceDataGen:
         '''vocab from:
         https://gist.github.com/braingineer/c69482eb1bfa4ac3bf9a7bc9b6b35cdf
         github.com/braingineer/ikelos/blob/master/ikelos/data/data_server.py
-
         other notes:
         github.com/fchollet/keras/blob/master/examples/lstm_text_generation.
-
         '''
         # split by words or chars
         if words:
@@ -166,39 +173,6 @@ class SequenceDataGen:
                 X[i, t, char_indices[char]] = 1
             y[i, char_indices[next_chars[i]]] = 1
 
-    def _flow_index(self, N, batch_size=32, shuffle=False, seed=None):
-        while 1:
-            index_array = np.arange(N)
-            if self.batch_index == 0:
-                if shuffle:
-                    if seed is not None:
-                        np.random.seed(seed + self.total_batches_seen)
-                    index_array = np.random.permutation(N)
-
-            current_index = (self.batch_index * batch_size) % N
-            if N >= current_index + batch_size:
-                current_batch_size = batch_size
-                self.batch_index += 1
-            else:
-                current_batch_size = N - current_index
-                self.batch_index = 0
-            self.total_batches_seen += 1
-            yield (index_array[current_index: current_index + current_batch_size],
-                   current_index, current_batch_size)
-
-    def flow(self, X, y, batch_size=32, shuffle=False, seed=None,
-             save_to_dir=None, save_prefix='', save_format='jpeg'):
-        assert len(X) == len(y)
-        self.X = X
-        self.y = y
-        self.save_to_dir = save_to_dir
-        self.save_prefix = save_prefix
-        self.save_format = save_format
-        self.reset()
-        self.flow_generator = self._flow_index(X.shape[0], batch_size,
-                                               shuffle, seed)
-        return self
-
     def __iter__(self):
         # needed if we want to do something like:
         # for x, y in data_gen.flow(...):
@@ -209,14 +183,4 @@ class SequenceDataGen:
         return self.next()
 
 
-'''
-EXAMPLE :
-['preface\n\n\nsupposing that truth is a woma',
-'face\n\n\nsupposing that truth is a woman--',
-'e\n\n\nsupposing that truth is a woman--wha']
-self.x_window = 40
-x_window=10,
-y_window=1,
-x_step=3,
-x_y_diff=0,
-'''
+
