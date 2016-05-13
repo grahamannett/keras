@@ -151,7 +151,7 @@ class SequenceDataGen:
         '''
         # split by words or chars
         if words:
-            # # implement later
+            # TODO:
             # things_to_replace = {'\n': ' ', '--': ' -- '}
             # for k, v in things_to_replace.items():
             #     data = data.replace(k, v)
@@ -164,14 +164,33 @@ class SequenceDataGen:
 
         self.token_indices = dict((c, i) for i, c in enumerate(self.tokens))
         self.indices_token = dict((i, c) for i, c in enumerate(self.tokens))
-        # vectorization
 
-        X = np.zeros((len(sentences), maxlen, len(chars)), dtype=np.bool)
-        y = np.zeros((len(sentences), len(chars)), dtype=np.bool)
-        for i, sentence in enumerate(sentences):
-            for t, char in enumerate(sentence):
-                X[i, t, char_indices[char]] = 1
-            y[i, char_indices[next_chars[i]]] = 1
+        idxes_ = self.idxes
+        while idxes_:
+            # take current batch of indexes and then delete from available,
+            # uses len(batch_) instead of self.batch_size b/c possible size of
+            # last batch < batch_size
+            batch_ = idxes_[:self.batch_size]
+            del idxes_[:len(batch_)]
+            # new np.eros array for each group of batches to pass into
+            X = np.zeros((len(batch_), self.x_window,
+                          len(self.tokens)), dtype=np.bool)
+            Y = np.zeros((len(batch_), self.y_window,
+                          len(self.tokens)), dtype=np.bool)
+            # for each index in batch, take X,y vocab pair from data based on
+            # window, put into vectorized X,y form
+            for zero_index, i in enumerate(batch_):
+                # provide single instance of sentence vectorized into X,y
+                X_window_end = i + self.x_window
+                X_window = data[i: X_window_end]
+                y_start = X_window_end + self.x_y_diff
+                y_end = y_start + self.y_window
+                Y_window = data[y_start:y_end]
+                for t, char in enumerate(X_window):
+                    X[i, t, self.token_indices[char]]
+                for t, char in enumerate(Y_window):
+                    Y[i, t, self.token_indices[char]]
+            yield X, Y
 
     def __iter__(self):
         # needed if we want to do something like:
@@ -183,4 +202,70 @@ class SequenceDataGen:
         return self.next()
 
 
+x_window = 40
+x_step = 3
+y_window = 1
+x_y_diff = 0
+batch_size = 5
 
+def gen_possible_indices(X):
+    '''
+    get possible indices's for time series given
+    '''
+    if isinstance(X, str):
+        X_shape = len(X)
+    else:
+        X_shape = X.shape[0]
+    last_window = x_window + y_window + x_y_diff
+    idxes = list(range(0, X_shape - last_window, x_step))
+    # if self.shuffle:
+    #     from random import shuffle
+    #     shuffle(idxes)
+    return idxes
+
+
+def flow_from_vocab(data, words=False):
+    '''vocab from:
+    https://gist.github.com/braingineer/c69482eb1bfa4ac3bf9a7bc9b6b35cdf
+    github.com/braingineer/ikelos/blob/master/ikelos/data/data_server.py
+    other notes:
+    github.com/fchollet/keras/blob/master/examples/lstm_text_generation.
+    '''
+    # split by words or chars
+    if words:
+        # TODO:
+        # things_to_replace = {'\n': ' ', '--': ' -- '}
+        # for k, v in things_to_replace.items():
+        #     data = data.replace(k, v)
+        # self.tokens = set(self.data.split(' '))
+        pass
+    else:
+        tokens = set(data)
+    idxes = gen_possible_indices(data)
+    token_indices = dict((c, i) for i, c in enumerate(tokens))
+    indices_token = dict((i, c) for i, c in enumerate(tokens))
+
+    idxes_ = idxes
+    while idxes_:
+        # take current batch of indexes and then delete from available,
+        # uses len(batch_) instead of self.batch_size b/c possible size of
+        # last batch < batch_size
+        batch_ = idxes_[:batch_size]
+        del idxes_[:len(batch_)]
+        # new np.eros array for each group of batches to pass into
+        X = np.zeros((len(batch_), x_window, len(tokens)), dtype=np.bool)
+        Y = np.zeros((len(batch_), y_window, len(tokens)), dtype=np.bool)
+        # for each index in batch, take X,y vocab pair from data based on
+        # window, put into vectorized X,y form
+        for zero_index, i in enumerate(batch_):
+            # provide single instance of sentence vectorized into X,y
+            X_window_end = i + x_window
+            X_window = data[i: X_window_end]
+            y_start = X_window_end + x_y_diff
+            y_end = y_start + y_window
+            Y_window = data[y_start:y_end]
+            for t, char in enumerate(X_window):
+                X[zero_index, t, token_indices[char]] = 1
+            for t, char in enumerate(Y_window):
+                Y[zero_index, t, token_indices[char]] = 1
+        yield X, Y
