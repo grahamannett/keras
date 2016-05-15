@@ -94,6 +94,7 @@ class SequenceDataGen:
 
         self.batch_size = batch_size
         self.shuffle = shuffle
+        self.vocab = vocab
 
     def reset(self):
         self.batch_index = 0
@@ -128,7 +129,7 @@ class SequenceDataGen:
         for idx in self.idxes:
             yield self.generate_x_y(data, idx)
 
-    def _flow_batch(self, data, seed=None):
+    def flow_batch(self, data, seed=None):
         idxes_ = self.idxes_
         while idxes_:
             batch_ = idxes_[:self.batch_size]
@@ -138,21 +139,18 @@ class SequenceDataGen:
 
     def flow(self, data, seed=None):
         self.idxes = self.gen_possible_indices(data)
-        # self.flow_generator = self._flow_single(data)
-        self.flow_generator = self._flow_batch(data)
+        if self.vocab:
+            self.flow_generator = self.flow_from_vocab(data)
+        else:
+            self.flow_generator = self.flow_batch(data)
         return self
 
     def flow_from_vocab(self, data, words=False):
-        '''vocab from:
-        https://gist.github.com/braingineer/c69482eb1bfa4ac3bf9a7bc9b6b35cdf
-        github.com/braingineer/ikelos/blob/master/ikelos/data/data_server.py
-        other notes:
-        github.com/fchollet/keras/blob/master/examples/lstm_text_generation.
+        '''generator that does vocab to batches with vectorization
         '''
-        # split by words or chars
         if words:
-            # TODO:
-            # things_to_replace = {'\n': ' ', '--': ' -- '}
+            # TODO: split by words or chars, will need to create 'bank' for
+            # word splits like :things_to_replace = {'\n': ' ', '--': ' -- '}
             # for k, v in things_to_replace.items():
             #     data = data.replace(k, v)
             # self.tokens = set(self.data.split(' '))
@@ -187,9 +185,9 @@ class SequenceDataGen:
                 y_end = y_start + self.y_window
                 Y_window = data[y_start:y_end]
                 for t, char in enumerate(X_window):
-                    X[i, t, self.token_indices[char]]
+                    X[zero_index, t, self.token_indices[char]] = 1
                 for t, char in enumerate(Y_window):
-                    Y[i, t, self.token_indices[char]]
+                    Y[zero_index, t, self.token_indices[char]] = 1
             yield X, Y
 
     def __iter__(self):
@@ -202,70 +200,86 @@ class SequenceDataGen:
         return self.next()
 
 
-x_window = 40
-x_step = 3
-y_window = 1
-x_y_diff = 0
-batch_size = 5
+########################################################
+# lstm text generation example
 
-def gen_possible_indices(X):
-    '''
-    get possible indices's for time series given
-    '''
-    if isinstance(X, str):
-        X_shape = len(X)
-    else:
-        X_shape = X.shape[0]
-    last_window = x_window + y_window + x_y_diff
-    idxes = list(range(0, X_shape - last_window, x_step))
-    # if self.shuffle:
-    #     from random import shuffle
-    #     shuffle(idxes)
-    return idxes
+from __future__ import print_function
+from keras.models import Sequential
+from keras.layers import Dense, Activation, Dropout
+from keras.layers import LSTM
+from keras.utils.data_utils import get_file
+import numpy as np
+import random
+import sys
+
+path = get_file('nietzsche.txt',
+                origin="https://s3.amazonaws.com/text-datasets/nietzsche.txt")
+text = open(path).read().lower()
+print('corpus length:', len(text))
+
+x_win = 40
+y_win = 1
+chars_length = set(text)
+# generator object with commented variables equivalent in lstm example
+seqGen = SequenceDataGen(x_window=x_win,  # maxlen
+                         x_step=3,  # step
+                         y_window=1,  # next_char
+                         x_y_diff=0,  # not in example but diff between sentences,next_char is 0
+                         batch_size=16,  # batch_size
+                         vocab=True)
+
+seqGen.flow(text)
+
+# build the model: 2 stacked LSTM
+print('Build model...')
+model = Sequential()
+model.add(LSTM(512, return_sequences=True, input_shape=(x_win, chars_length)))
+model.add(Dropout(0.2))
+model.add(LSTM(512, return_sequences=False))
+model.add(Dropout(0.2))
+model.add(Dense(chars_length))
+model.add(Activation('softmax'))
+
+model.compile(loss='categorical_crossentropy', optimizer='rmsprop')
 
 
-def flow_from_vocab(data, words=False):
-    '''vocab from:
-    https://gist.github.com/braingineer/c69482eb1bfa4ac3bf9a7bc9b6b35cdf
-    github.com/braingineer/ikelos/blob/master/ikelos/data/data_server.py
-    other notes:
-    github.com/fchollet/keras/blob/master/examples/lstm_text_generation.
-    '''
-    # split by words or chars
-    if words:
-        # TODO:
-        # things_to_replace = {'\n': ' ', '--': ' -- '}
-        # for k, v in things_to_replace.items():
-        #     data = data.replace(k, v)
-        # self.tokens = set(self.data.split(' '))
-        pass
-    else:
-        tokens = set(data)
-    idxes = gen_possible_indices(data)
-    token_indices = dict((c, i) for i, c in enumerate(tokens))
-    indices_token = dict((i, c) for i, c in enumerate(tokens))
+def sample(a, temperature=1.0):
+    # helper function to sample an index from a probability array
+    a = np.log(a) / temperature
+    a = np.exp(a) / np.sum(np.exp(a))
+    return np.argmax(np.random.multinomial(1, a, 1))
 
-    idxes_ = idxes
-    while idxes_:
-        # take current batch of indexes and then delete from available,
-        # uses len(batch_) instead of self.batch_size b/c possible size of
-        # last batch < batch_size
-        batch_ = idxes_[:batch_size]
-        del idxes_[:len(batch_)]
-        # new np.eros array for each group of batches to pass into
-        X = np.zeros((len(batch_), x_window, len(tokens)), dtype=np.bool)
-        Y = np.zeros((len(batch_), y_window, len(tokens)), dtype=np.bool)
-        # for each index in batch, take X,y vocab pair from data based on
-        # window, put into vectorized X,y form
-        for zero_index, i in enumerate(batch_):
-            # provide single instance of sentence vectorized into X,y
-            X_window_end = i + x_window
-            X_window = data[i: X_window_end]
-            y_start = X_window_end + x_y_diff
-            y_end = y_start + y_window
-            Y_window = data[y_start:y_end]
-            for t, char in enumerate(X_window):
-                X[zero_index, t, token_indices[char]] = 1
-            for t, char in enumerate(Y_window):
-                Y[zero_index, t, token_indices[char]] = 1
-        yield X, Y
+# train the model, output generated text after each iteration
+for iteration in range(1, 60):
+    print()
+    print('-' * 50)
+    print('Iteration', iteration)
+    model.fit(X, y, batch_size=128, nb_epoch=1)
+
+    start_index = random.randint(0, len(text) - maxlen - 1)
+
+    for diversity in [0.2, 0.5, 1.0, 1.2]:
+        print()
+        print('----- diversity:', diversity)
+
+        generated = ''
+        sentence = text[start_index: start_index + maxlen]
+        generated += sentence
+        print('----- Generating with seed: "' + sentence + '"')
+        sys.stdout.write(generated)
+
+        for i in range(400):
+            x = np.zeros((1, maxlen, len(chars)))
+            for t, char in enumerate(sentence):
+                x[0, t, char_indices[char]] = 1.
+
+            preds = model.predict(x, verbose=0)[0]
+            next_index = sample(preds, diversity)
+            next_char = indices_char[next_index]
+
+            generated += next_char
+            sentence = sentence[1:] + next_char
+
+            sys.stdout.write(next_char)
+            sys.stdout.flush()
+        print()
